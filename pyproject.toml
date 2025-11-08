@@ -1,0 +1,16 @@
+[project]
+name = "babysitter"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.121.0",
+    "google-generativeai>=0.8.5",
+    "graphiti-core>=0.22.0",
+    "notion-client>=2.7.0",
+    "openai>=2.7.1",
+    "pygithub>=2.8.1",
+    "python-dotenv>=1.2.1",
+    "uvicorn>=0.38.0",
+]

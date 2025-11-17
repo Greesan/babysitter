@@ -1,6 +1,6 @@
 # Babysitter POC
-I can now vibecode on my claude code instance from my phone through notion! :D\\
-Autonomous Claude AI loop with human-in-the-loop intervention via Notion.
+I can now vibecode on my claude code instance from my phone through notion! :D \
+Project is aiming for Autonomous Claude AI loop with human-in-the-loop intervention via Notion.
 
 ## How It Works
 

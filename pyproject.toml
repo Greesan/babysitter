@@ -1,0 +1,12 @@
+[project]
+name = "babysitter-poc"
+version = "0.1.0"
+description = "Autonomous Claude loop with human-in-the-loop via Notion"
+requires-python = ">=3.10"
+dependencies = [
+    "notion-client>=2.0.0",
+    "mcp>=0.1.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["scripts"]

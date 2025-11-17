@@ -1,0 +1,35 @@
+# Environment variables
+.env
+mcp-config-runtime.json
+
+# Python virtual environment
+.venv/
+venv/
+ENV/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Runtime data
+tickets/
+claude_conversations/
+
+# Claude Code config (may contain sensitive data)
+.claude/
+
+# Testing directories
+testingClaude/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "notion-ticket": {
+      "command": "/home/grees/greesCoding/claude-projects/babysitterPOC/scripts/notion_mcp_server.py",
+      "env": {
+        "NOTION_TOKEN": "${NOTION_TOKEN}",
+        "NOTION_TICKET_DB": "${NOTION_TICKET_DB}",
+        "CLAUDE_TICKET_DIR": "${CLAUDE_TICKET_DIR}"
+      }
+    }
+  }
+}

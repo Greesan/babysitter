@@ -1,5 +1,5 @@
 # Babysitter POC
-COOL STUFF I CAN NOW VIBECODE FROM ON MY CLAUDE CODE INSTANCE FROM MY PHONE THROUGH NOTION :D
+I can now vibecode on my claude code instance from my phone through notion! :D\\
 Autonomous Claude AI loop with human-in-the-loop intervention via Notion.
 
 ## How It Works

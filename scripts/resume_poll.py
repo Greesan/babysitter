@@ -41,6 +41,34 @@ for f in os.listdir(TICKET_DIR):
         print(f"  Archived local ticket files for {ticket}")
         continue
 
+    # Check ticket status
+    status_prop = page["properties"].get("Status", {})
+    status = status_prop.get("status", {}).get("name", "") if status_prop else ""
+
+    print(f"Ticket {ticket} status: {status}")
+
+    # If status is "Done", archive and skip
+    if status == "Done":
+        print(f"Ticket {ticket} marked as Done by human, archiving...")
+        archive_dir = f"{TICKET_DIR}/archive"
+        os.makedirs(archive_dir, exist_ok=True)
+        for ext in [".page", ".question", ".conversation"]:
+            src = f"{TICKET_DIR}/{ticket}{ext}"
+            if os.path.exists(src):
+                os.rename(src, f"{archive_dir}/{ticket}{ext}")
+        print(f"  Archived ticket {ticket}")
+        continue
+
+    # If status is "Error", skip (let human fix)
+    if status == "Error":
+        print(f"Ticket {ticket} in Error state, skipping (awaiting human intervention)")
+        continue
+
+    # Only process tickets in "Requesting User Input" status
+    if status != "Requesting User Input":
+        print(f"Ticket {ticket} not ready (status: {status}), skipping")
+        continue
+
     session_id_prop = page["properties"].get("Session ID", {})
     session_id = ""
     if session_id_prop.get("rich_text"):
@@ -68,18 +96,39 @@ for f in os.listdir(TICKET_DIR):
             human_answer += "\n".join(t["text"]["content"] for t in block["paragraph"].get("rich_text", [])) + "\n"
         if found and block["type"] == "to_do":
             checkbox_ready = block["to_do"].get("checked", False)
+            break  # Stop after finding the checkbox
 
     # Only resume if both answer exists AND checkbox is checked
     if human_answer.strip() and checkbox_ready:
         print(f"Resuming Claude for ticket {ticket} with session ID {session_id}")
         try:
+            # Update status to "Agent at Work" before resuming
+            notion.pages.update(
+                page_id=page_id,
+                properties={"Status": {"status": {"name": "Agent at Work"}}}
+            )
+            print(f"  Updated status to 'Agent at Work'")
+
+            # Resume Claude
             subprocess.run(
                 ["claude", "-p", "--resume", session_id, "--mcp-config", "mcp-config.json", "--dangerously-skip-permissions"],
                 input=human_answer.strip().encode(),
                 check=True,
                 cwd=PROJECT_ROOT  # Run from project root to find mcp-config.json
             )
-            os.rename(f"{TICKET_DIR}/{ticket}.page", f"{TICKET_DIR}/{ticket}.done")
-            print(f"Ticket {ticket} resumed and marked done.")
+
+            # Don't mark as .done - keep as .page for multi-turn or human to mark done
+            print(f"Ticket {ticket} resumed successfully (kept as .page for multi-turn)")
+
         except subprocess.CalledProcessError as e:
+            # If resume fails, update status to "Error"
             print(f"Error resuming ticket {ticket}: {e}")
+            print(f"  Exit code: {e.returncode}")
+            try:
+                notion.pages.update(
+                    page_id=page_id,
+                    properties={"Status": {"status": {"name": "Error"}}}
+                )
+                print(f"  Updated status to 'Error'")
+            except Exception as notion_error:
+                print(f"  Failed to update status to Error: {notion_error}")

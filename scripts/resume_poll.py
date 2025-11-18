@@ -6,6 +6,69 @@ TICKET_DIR = os.environ.get("CLAUDE_TICKET_DIR", "./tickets")
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 notion = Client(auth=os.environ["NOTION_TOKEN"])
 
+# Check archived tickets for resuscitation
+archive_dir = f"{TICKET_DIR}/archive"
+if os.path.exists(archive_dir):
+    print("Checking archived tickets for resuscitation...")
+    for f in os.listdir(archive_dir):
+        if not f.endswith(".page"):
+            continue
+        ticket = f.split(".")[0]
+        page_id_path = f"{archive_dir}/{ticket}.page"
+
+        if os.path.exists(page_id_path):
+            page_id = open(page_id_path).read().strip()
+
+            try:
+                # Check current status in Notion
+                page = notion.pages.retrieve(page_id=page_id)
+                status_prop = page["properties"].get("Status", {})
+                status = status_prop.get("status", {}).get("name", "") if status_prop else ""
+
+                # If status is no longer "Done", resuscitate!
+                if status and status != "Done":
+                    print(f"Resuscitating ticket {ticket} (status changed to: {status})")
+
+                    # Add resuscitation notification to Notion
+                    try:
+                        from datetime import datetime
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        notion.blocks.children.append(
+                            block_id=page_id,
+                            children=[
+                                {
+                                    "object": "block",
+                                    "type": "divider",
+                                    "divider": {}
+                                },
+                                {
+                                    "object": "block",
+                                    "type": "callout",
+                                    "callout": {
+                                        "rich_text": [{"type": "text", "text": {"content": f"🔄 Ticket resuscitated at {timestamp} (status: {status})"}}],
+                                        "icon": {"emoji": "♻️"},
+                                        "color": "green_background"
+                                    }
+                                }
+                            ]
+                        )
+                    except Exception as e:
+                        print(f"  Warning: Could not add resuscitation notification: {e}")
+
+                    # Move files back from archive to active tickets
+                    for ext in [".page", ".question", ".conversation"]:
+                        src = f"{archive_dir}/{ticket}{ext}"
+                        dst = f"{TICKET_DIR}/{ticket}{ext}"
+                        if os.path.exists(src):
+                            os.rename(src, dst)
+
+                    print(f"  Ticket {ticket} moved back to active tickets")
+
+            except Exception as e:
+                print(f"Warning: Could not check archived ticket {ticket}: {e}")
+                continue
+
+# Process active tickets
 for f in os.listdir(TICKET_DIR):
     if not f.endswith(".page"):
         continue
@@ -50,6 +113,35 @@ for f in os.listdir(TICKET_DIR):
     # If status is "Done", archive and skip
     if status == "Done":
         print(f"Ticket {ticket} marked as Done by human, archiving...")
+
+        # Add archive notification to Notion page
+        try:
+            from datetime import datetime
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            notion.blocks.children.append(
+                block_id=page_id,
+                children=[
+                    {
+                        "object": "block",
+                        "type": "divider",
+                        "divider": {}
+                    },
+                    {
+                        "object": "block",
+                        "type": "callout",
+                        "callout": {
+                            "rich_text": [{"type": "text", "text": {"content": f"✅ Ticket archived at {timestamp}. Change status to resuscitate."}}],
+                            "icon": {"emoji": "📦"},
+                            "color": "gray_background"
+                        }
+                    }
+                ]
+            )
+            print(f"  Added archive notification to Notion page")
+        except Exception as e:
+            print(f"  Warning: Could not add archive notification: {e}")
+
+        # Archive local files
         archive_dir = f"{TICKET_DIR}/archive"
         os.makedirs(archive_dir, exist_ok=True)
         for ext in [".page", ".question", ".conversation"]:

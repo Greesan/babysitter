@@ -79,24 +79,47 @@ for f in os.listdir(TICKET_DIR):
         continue
 
     # Read human response from Notion blocks
+    # IMPORTANT: We need the LAST "Human Response" section (most recent turn), not the first
     try:
         blocks = notion.blocks.children.list(block_id=page_id)["results"]
     except Exception as e:
         print(f"Warning: Could not read blocks for ticket {ticket}: {e}")
         continue
+
+    # Find all "Human Response" sections
+    response_sections = []
+    current_section = None
+
+    for i, block in enumerate(blocks):
+        if block["type"] == "heading_3" and any("Human Response" in t["text"]["content"] for t in block["heading_3"].get("rich_text", [])):
+            # Save previous section if exists
+            if current_section is not None:
+                response_sections.append(current_section)
+            # Start new section
+            current_section = {"start_index": i, "blocks": []}
+        elif current_section is not None:
+            current_section["blocks"].append(block)
+            # Stop section at next heading or divider
+            if block["type"] in ["heading_1", "heading_2", "heading_3", "divider"]:
+                response_sections.append(current_section)
+                current_section = None
+
+    # Save last section if still open
+    if current_section is not None:
+        response_sections.append(current_section)
+
+    # Get the LAST response section (most recent turn)
     human_answer = ""
     checkbox_ready = False
-    found = False
 
-    for block in blocks:
-        if block["type"] == "heading_3" and any("Human Response" in t["text"]["content"] for t in block["heading_3"].get("rich_text", [])):
-            found = True
-            continue
-        if found and block["type"] == "paragraph":
-            human_answer += "\n".join(t["text"]["content"] for t in block["paragraph"].get("rich_text", [])) + "\n"
-        if found and block["type"] == "to_do":
-            checkbox_ready = block["to_do"].get("checked", False)
-            break  # Stop after finding the checkbox
+    if response_sections:
+        last_section = response_sections[-1]
+        for block in last_section["blocks"]:
+            if block["type"] == "paragraph":
+                human_answer += "\n".join(t["text"]["content"] for t in block["paragraph"].get("rich_text", [])) + "\n"
+            if block["type"] == "to_do":
+                checkbox_ready = block["to_do"].get("checked", False)
+                break  # Stop after finding the checkbox
 
     # Only resume if both answer exists AND checkbox is checked
     if human_answer.strip() and checkbox_ready:

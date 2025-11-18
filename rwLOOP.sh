@@ -131,10 +131,8 @@ count_pending_tickets() {
 }
 
 start_new_conversation() {
-    # Generate a unique session ID for this conversation
-    export CLAUDE_SESSION_ID=$(uuidgen)
-
-    log SUCCESS "Starting new conversation (session: $CLAUDE_SESSION_ID)"
+    # Use persistent session ID (set once at startup)
+    log SUCCESS "Starting conversation (session: $CLAUDE_SESSION_ID)"
     log DEBUG "Loading prompt from $PROMPT_FILE"
     log DEBUG "Using MCP config: $MCP_CONFIG"
 
@@ -177,6 +175,11 @@ main() {
     validate_environment
     setup_directories
     load_environment
+
+    # Get or create persistent session ID
+    log INFO "Determining session ID..."
+    export CLAUDE_SESSION_ID=$(uv run python "$PROJECT_ROOT/scripts/get_or_create_session.py")
+    log SUCCESS "Session ID: $CLAUDE_SESSION_ID"
 
     log SUCCESS "Initialization complete"
     echo ""

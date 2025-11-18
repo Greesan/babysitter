@@ -12,9 +12,174 @@ TICKET_DIR = os.environ.get("CLAUDE_TICKET_DIR", "./tickets")
 NOTION_TOKEN = os.environ.get("NOTION_TOKEN")
 NOTION_TICKET_DB = os.environ.get("NOTION_TICKET_DB")
 CLAUDE_SESSION_ID = os.environ.get("CLAUDE_SESSION_ID", "")
+INCLUDE_METADATA = os.environ.get("INCLUDE_METADATA", "false").lower() == "true"
 
 # Ensure directories exist
 os.makedirs(TICKET_DIR, exist_ok=True)
+
+def extract_metadata(conv_file_path):
+    """Extract metadata from conversation file for Notion display."""
+    if not INCLUDE_METADATA or not os.path.exists(conv_file_path):
+        return None
+
+    try:
+        with open(conv_file_path, 'r') as f:
+            conv_data = json.load(f)
+
+        metadata = {
+            "tool_calls": [],
+            "files_changed": set(),
+            "commands": [],
+            "conversation_summary": []
+        }
+
+        # Parse conversation messages
+        messages = conv_data.get("messages", [])
+
+        for msg in messages:
+            role = msg.get("role", "")
+            content = msg.get("content", [])
+
+            # Extract tool uses from assistant messages
+            if role == "assistant":
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "tool_use":
+                        tool_name = item.get("name", "unknown")
+                        tool_input = item.get("input", {})
+
+                        # Track tool call
+                        metadata["tool_calls"].append({
+                            "name": tool_name,
+                            "input": tool_input
+                        })
+
+                        # Track file changes
+                        if tool_name in ["Edit", "Write"]:
+                            file_path = tool_input.get("file_path", "")
+                            if file_path:
+                                metadata["files_changed"].add(file_path)
+
+                        # Track bash commands
+                        if tool_name == "Bash":
+                            command = tool_input.get("command", "")
+                            if command:
+                                metadata["commands"].append(command)
+
+            # Build conversation summary
+            if role in ["user", "assistant"]:
+                text_content = ""
+                for item in content:
+                    if isinstance(item, dict) and item.get("type") == "text":
+                        text_content = item.get("text", "")[:200]  # First 200 chars
+                    elif isinstance(item, str):
+                        text_content = item[:200]
+
+                if text_content:
+                    metadata["conversation_summary"].append({
+                        "role": role,
+                        "text": text_content
+                    })
+
+        metadata["files_changed"] = list(metadata["files_changed"])
+        return metadata
+
+    except Exception as e:
+        import sys
+        print(f"[DEBUG] Error extracting metadata: {e}", file=sys.stderr)
+        return None
+
+def create_metadata_blocks(metadata):
+    """Create Notion blocks for metadata display."""
+    if not metadata:
+        return []
+
+    blocks = []
+
+    # Tool Calls toggle
+    if metadata["tool_calls"]:
+        tool_lines = []
+        for i, tool in enumerate(metadata["tool_calls"], 1):
+            tool_name = tool["name"]
+            tool_input = tool["input"]
+            # Summarize input
+            summary = ""
+            if tool_name in ["Edit", "Write", "Read"]:
+                summary = f"→ {tool_input.get('file_path', 'unknown')}"
+            elif tool_name == "Bash":
+                cmd = tool_input.get('command', '')[:60]
+                summary = f"→ {cmd}{'...' if len(tool_input.get('command', '')) > 60 else ''}"
+            else:
+                summary = f"→ {str(tool_input)[:60]}..."
+
+            tool_lines.append(f"{i}. {tool_name} {summary}")
+
+        blocks.append({
+            "object": "block",
+            "type": "toggle",
+            "toggle": {
+                "rich_text": [{"type": "text", "text": {"content": f"🔧 Tools Used ({len(metadata['tool_calls'])})"}}],
+                "children": [{
+                    "object": "block",
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": line}}]}
+                } for line in tool_lines]
+            }
+        })
+
+    # Files Changed toggle
+    if metadata["files_changed"]:
+        blocks.append({
+            "object": "block",
+            "type": "toggle",
+            "toggle": {
+                "rich_text": [{"type": "text", "text": {"content": f"📝 Files Changed ({len(metadata['files_changed'])})"}}],
+                "children": [{
+                    "object": "block",
+                    "type": "bulleted_list_item",
+                    "bulleted_list_item": {"rich_text": [{"type": "text", "text": {"content": f}}]}
+                } for f in metadata["files_changed"]]
+            }
+        })
+
+    # Commands toggle
+    if metadata["commands"]:
+        blocks.append({
+            "object": "block",
+            "type": "toggle",
+            "toggle": {
+                "rich_text": [{"type": "text", "text": {"content": f"💻 Commands ({len(metadata['commands'])})"}}],
+                "children": [{
+                    "object": "block",
+                    "type": "code",
+                    "code": {
+                        "rich_text": [{"type": "text", "text": {"content": cmd}}],
+                        "language": "bash"
+                    }
+                } for cmd in metadata["commands"]]
+            }
+        })
+
+    # Conversation summary toggle
+    if metadata["conversation_summary"]:
+        conv_blocks = []
+        for msg in metadata["conversation_summary"]:
+            role_emoji = "👤" if msg["role"] == "user" else "🤖"
+            conv_blocks.append({
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {"rich_text": [{"type": "text", "text": {"content": f"{role_emoji} {msg['text']}"}}]}
+            })
+
+        blocks.append({
+            "object": "block",
+            "type": "toggle",
+            "toggle": {
+                "rich_text": [{"type": "text", "text": {"content": f"💬 Conversation Summary ({len(metadata['conversation_summary'])} messages)"}}],
+                "children": conv_blocks
+            }
+        })
+
+    return blocks
 
 # Create MCP server
 app = Server("notion-ticket-server")
@@ -149,6 +314,13 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 }
             ]
 
+            # Add metadata blocks if enabled
+            metadata = extract_metadata(conv_file)
+            if metadata:
+                print(f"[DEBUG] Adding metadata blocks to turn {new_turn}", file=sys.stderr)
+                metadata_blocks = create_metadata_blocks(metadata)
+                new_turn_blocks.extend(metadata_blocks)
+
             # Append blocks to end of page
             append_result = notion.blocks.children.append(
                 block_id=page_id,
@@ -196,6 +368,46 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                 f.write(conv_file)
 
             print(f"[DEBUG] Creating Notion page...", file=sys.stderr)
+
+            # Build children blocks
+            children_blocks = [
+                {
+                    "object": "block",
+                    "type": "heading_2",
+                    "heading_2": {"rich_text": [{"type": "text", "text": {"content": "🔄 TURN 1"}}]}
+                },
+                {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {"rich_text": [{"type": "text", "text": {"content": f"Claude asks: {question}"}}]}
+                },
+                {
+                    "object": "block",
+                    "type": "heading_3",
+                    "heading_3": {"rich_text": [{"type": "text", "text": {"content": "Human Response"}}]}
+                },
+                {
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {"rich_text": [{"type": "text", "text": {"content": ""}}]}
+                },
+                {
+                    "object": "block",
+                    "type": "to_do",
+                    "to_do": {
+                        "rich_text": [{"type": "text", "text": {"content": "Ready to submit (check when done)"}}],
+                        "checked": False
+                    }
+                }
+            ]
+
+            # Add metadata blocks if enabled
+            metadata = extract_metadata(conv_file)
+            if metadata:
+                print(f"[DEBUG] Adding metadata blocks to new ticket", file=sys.stderr)
+                metadata_blocks = create_metadata_blocks(metadata)
+                children_blocks.extend(metadata_blocks)
+
             # Create Notion page
             page = notion.pages.create(
                 parent={"database_id": NOTION_TICKET_DB},
@@ -206,36 +418,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
                     "Session ID": {"rich_text": [{"text": {"content": CLAUDE_SESSION_ID}}]},
                     "Turn Count": {"number": 1}
                 },
-                children=[
-                    {
-                        "object": "block",
-                        "type": "heading_2",
-                        "heading_2": {"rich_text": [{"type": "text", "text": {"content": "🔄 TURN 1"}}]}
-                    },
-                    {
-                        "object": "block",
-                        "type": "paragraph",
-                        "paragraph": {"rich_text": [{"type": "text", "text": {"content": f"Claude asks: {question}"}}]}
-                    },
-                    {
-                        "object": "block",
-                        "type": "heading_3",
-                        "heading_3": {"rich_text": [{"type": "text", "text": {"content": "Human Response"}}]}
-                    },
-                    {
-                        "object": "block",
-                        "type": "paragraph",
-                        "paragraph": {"rich_text": [{"type": "text", "text": {"content": ""}}]}
-                    },
-                    {
-                        "object": "block",
-                        "type": "to_do",
-                        "to_do": {
-                            "rich_text": [{"type": "text", "text": {"content": "Ready to submit (check when done)"}}],
-                            "checked": False
-                        }
-                    }
-                ]
+                children=children_blocks
             )
 
             page_id = page["id"]

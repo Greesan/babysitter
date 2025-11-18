@@ -117,8 +117,84 @@ for f in os.listdir(TICKET_DIR):
                 cwd=PROJECT_ROOT  # Run from project root to find mcp-config.json
             )
 
-            # Don't mark as .done - keep as .page for multi-turn or human to mark done
             print(f"Ticket {ticket} resumed successfully (kept as .page for multi-turn)")
+
+            # Auto-continuation: Check if Claude exited without calling ask_human
+            # If status is still "Agent At Work", Claude finished without asking for next task
+            # We'll force a continuation to keep the loop going
+            import time
+            time.sleep(2)  # Give MCP server time to update if it was called
+
+            try:
+                # Check current status
+                page_check = notion.pages.retrieve(page_id=page_id)
+                current_status = page_check["properties"].get("Status", {}).get("status", {}).get("name", "")
+                turn_count = page_check["properties"].get("Turn Count", {}).get("number", 1)
+
+                if current_status == "Agent at Work":
+                    # Claude exited without calling ask_human - force continuation
+                    print(f"  Agent exited without asking for next task, auto-continuing...")
+
+                    # Increment turn count
+                    new_turn = turn_count + 1
+
+                    # Add continuation turn to Notion page
+                    notion.blocks.children.append(
+                        block_id=page_id,
+                        children=[
+                            {
+                                "object": "block",
+                                "type": "divider",
+                                "divider": {}
+                            },
+                            {
+                                "object": "block",
+                                "type": "heading_2",
+                                "heading_2": {"rich_text": [{"type": "text", "text": {"content": f"🔄 TURN {new_turn}"}}]}
+                            },
+                            {
+                                "object": "block",
+                                "type": "paragraph",
+                                "paragraph": {"rich_text": [{"type": "text", "text": {"content": "Task completed. What should I work on next?"}}]}
+                            },
+                            {
+                                "object": "block",
+                                "type": "heading_3",
+                                "heading_3": {"rich_text": [{"type": "text", "text": {"content": "Human Response"}}]}
+                            },
+                            {
+                                "object": "block",
+                                "type": "paragraph",
+                                "paragraph": {"rich_text": [{"type": "text", "text": {"content": ""}}]}
+                            },
+                            {
+                                "object": "block",
+                                "type": "to_do",
+                                "to_do": {
+                                    "rich_text": [{"type": "text", "text": {"content": "Ready to submit (check when done)"}}],
+                                    "checked": False
+                                }
+                            }
+                        ]
+                    )
+
+                    # Update status and turn count
+                    notion.pages.update(
+                        page_id=page_id,
+                        properties={
+                            "Turn Count": {"number": new_turn},
+                            "Status": {"status": {"name": "Requesting User Input"}}
+                        }
+                    )
+
+                    print(f"  Auto-created turn {new_turn}, status set to 'Requesting User Input'")
+                elif current_status == "Requesting User Input":
+                    print(f"  Agent properly called ask_human (status: {current_status})")
+                else:
+                    print(f"  Status after resume: {current_status}")
+
+            except Exception as e:
+                print(f"  Warning: Could not check/update status after resume: {e}")
 
         except subprocess.CalledProcessError as e:
             # If resume fails, update status to "Error"

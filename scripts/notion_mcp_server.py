@@ -4,14 +4,15 @@ import sys
 import uuid
 import json
 import asyncio
-import logging
 import subprocess
 from datetime import datetime
-from logging.handlers import RotatingFileHandler
 from mcp.server import Server
 from mcp.types import Tool, TextContent
-from notion_client import Client
 import tiktoken
+
+# Import shared utilities
+from utils.logging import setup_logging
+from utils.notion_client import get_notion_client
 
 # Get environment variables
 TICKET_DIR = os.environ.get("CLAUDE_TICKET_DIR", "./tickets")
@@ -23,39 +24,7 @@ INCLUDE_METADATA = os.environ.get("INCLUDE_METADATA", "false").lower() == "true"
 # Ensure directories exist
 os.makedirs(TICKET_DIR, exist_ok=True)
 
-# Setup logging
-def setup_logging(script_name):
-    """Configure logging with both file and console handlers."""
-    logger = logging.getLogger(script_name)
-    logger.setLevel(logging.DEBUG)
-
-    # Console handler (stderr) - INFO and above
-    console_handler = logging.StreamHandler(sys.stderr)
-    console_handler.setLevel(logging.INFO)
-    console_formatter = logging.Formatter('[%(levelname)s] %(message)s')
-    console_handler.setFormatter(console_formatter)
-
-    # File handler (rotating logs) - DEBUG and above
-    # Get ticket dir at runtime to allow tests to override
-    ticket_dir = os.environ.get("CLAUDE_TICKET_DIR", "./tickets")
-    log_dir = os.path.join(ticket_dir, "logs")
-    os.makedirs(log_dir, exist_ok=True)
-    file_handler = RotatingFileHandler(
-        os.path.join(log_dir, f"{script_name}.log"),
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5
-    )
-    file_handler.setLevel(logging.DEBUG)
-    file_formatter = logging.Formatter(
-        '%(asctime)s [%(levelname)s] %(name)s:%(lineno)d - %(message)s'
-    )
-    file_handler.setFormatter(file_formatter)
-
-    logger.addHandler(console_handler)
-    logger.addHandler(file_handler)
-
-    return logger
-
+# Setup logging using shared utility
 logger = setup_logging("notion_mcp_server")
 
 def extract_metadata(conv_file_path):
@@ -545,7 +514,7 @@ async def call_tool(name: str, arguments: dict) -> list[TextContent]:
     # Connect to Notion
     try:
         logger.debug("Creating Notion client...")
-        notion = Client(auth=NOTION_TOKEN)
+        notion = get_notion_client()
         logger.debug("Notion client created successfully")
     except Exception as e:
         logger.error(f"Error creating Notion client: {e}", exc_info=True)

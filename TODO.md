@@ -2,6 +2,13 @@
 
 ## High Priority
 
+### Code Refactoring
+- [ ] Split notion_mcp_server.py into modules (metadata/extraction.py, metadata/blocks.py)
+- [ ] Extract Notion block creation utilities
+- [ ] Add logging to resume_poll.py (replace print statements)
+- [ ] Add logging to cleanup_tickets.py (replace print statements)
+- [ ] Add logging to get_or_create_session.py (replace print statements)
+
 ### Enhanced Metadata (Phase 2)
 - [ ] Track tool outputs (show what Claude saw)
 - [ ] Highlight errors (⚠️ failed operations)

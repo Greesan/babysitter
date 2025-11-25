@@ -87,7 +87,7 @@ validate_environment() {
     fi
 
     # Check required commands are available
-    for cmd in claude uuidgen uv; do
+    for cmd in claude uv; do
         if ! command -v "$cmd" &> /dev/null; then
             log ERROR "Required command not found: $cmd"
             exit 1

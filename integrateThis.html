@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminal Green Agent</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* Matrix / Terminal Theme Base */
+        body {
+            background-color: #050505;
+            color: #e4e4e7;
+        }
+
+        /* Custom Scrollbar (Green Tint) */
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #050505;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #1a2e1a;
+            border-radius: 4px;
+            border: 1px solid #050505;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #2d4a2d;
+        }
+
+        /* Animations */
+        .fade-in {
+            animation: fadeIn 0.3s ease-out forwards;
+            opacity: 0;
+            transform: translateY(10px);
+        }
+
+        @keyframes fadeIn {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Input Glow Focus (Green) */
+        .input-glow:focus-within {
+            box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.4);
+            /* Emerald Glow */
+            border-color: #10b981;
+        }
+    </style>
+</head>
+
+<body
+    class="h-screen flex flex-col overflow-hidden font-mono antialiased selection:bg-emerald-900 selection:text-white">
+
+    <!-- Navigation (Shortcuts) -->
+    <div class="fixed top-6 right-6 flex flex-col gap-3 z-50">
+        <button onclick="scrollToTop()"
+            class="p-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-full shadow-xl text-emerald-500 hover:text-emerald-400 transition duration-200 group">
+            <i data-lucide="arrow-up" class="group-hover:-translate-y-0.5 transition-transform"></i>
+        </button>
+        <button onclick="scrollToBottom()"
+            class="p-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-full shadow-xl text-emerald-500 hover:text-emerald-400 transition duration-200 group">
+            <i data-lucide="arrow-down" class="group-hover:translate-y-0.5 transition-transform"></i>
+        </button>
+    </div>
+
+    <!-- Main Feed -->
+    <main id="chat-container" class="flex-1 overflow-y-auto px-4 py-12 pb-64 w-full max-w-4xl mx-auto scroll-smooth">
+        <!-- Blocks injected here -->
+    </main>
+
+    <!-- Floating Input (Bottom) -->
+    <div
+        class="fixed bottom-0 left-0 w-full px-4 pb-8 pt-12 bg-gradient-to-t from-[#050505] via-[#050505] to-transparent z-40 flex justify-center pointer-events-none">
+        <div class="w-full max-w-3xl pointer-events-auto">
+            <div
+                class="bg-[#0a0a0a]/95 backdrop-blur-xl border border-zinc-800 shadow-2xl rounded-lg overflow-hidden input-glow transition-all duration-300">
+                <form id="chat-form" onsubmit="handleSend(event)" class="flex flex-col">
+
+                    <!-- Meta Bar -->
+                    <div class="px-4 py-2 bg-black/40 border-b border-white/5 flex justify-between items-center">
+                        <div
+                            class="flex items-center gap-2 text-xs font-bold text-emerald-600 uppercase tracking-widest">
+                            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                            <span>System Active</span>
+                        </div>
+                        <span class="text-xs font-mono text-zinc-600">v2.4.0</span>
+                    </div>
+
+                    <!-- Input -->
+                    <textarea id="user-input"
+                        class="w-full p-4 h-20 bg-[#0a0a0a] text-emerald-100 placeholder:text-zinc-700 border-none outline-none resize-none text-base font-mono"
+                        placeholder="Input command or prompt..."
+                        onkeydown="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); handleSend(event); }"></textarea>
+
+                    <!-- Actions -->
+                    <div class="flex justify-between items-center px-3 pb-3 pt-1 bg-[#0a0a0a]">
+                        <div class="flex gap-1">
+                            <button type="button"
+                                class="p-2 hover:bg-zinc-900 rounded text-zinc-600 hover:text-emerald-500 transition">
+                                <i data-lucide="paperclip" width="18"></i>
+                            </button>
+                        </div>
+
+                        <!-- Execute Button (Green) -->
+                        <button type="submit"
+                            class="bg-emerald-700 hover:bg-emerald-600 text-white px-6 py-2 rounded text-sm font-bold tracking-wide shadow-lg shadow-emerald-900/20 transition-all flex items-center gap-2 uppercase">
+                            <span>Execute</span>
+                            <i data-lucide="terminal" width="14" class="fill-current"></i>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        //  1. JSON DATA LOADER (The Integration Logic)
+        // ==========================================
+
+        // This mimics the JSON you would receive from your backend/Notion
+        const RAW_JSON_DATA = [
+            {
+                "id": "msg_1",
+                "role": "agent_question",
+                "content": "I detected a `package.json` file. Do you want me to scan for outdated dependencies?",
+                "timestamp": "10:42 AM"
+            },
+            {
+                "id": "msg_2",
+                "role": "user_response",
+                "content": "Yes, check for major version updates only.",
+                "timestamp": "10:43 AM"
+            },
+            {
+                "id": "msg_3",
+                "role": "tool_call",
+                "tool_name": "npm_audit",
+                "status": "completed",
+                "title": "Running Dependency Scan",
+                "output_type": "terminal",
+                "content": "> npm outdated --depth=0\n\nPackage      Current  Wanted  Latest  Location\nreact        17.0.2   17.0.2  18.2.0  node_modules/react\ntypescript   4.5.4    4.5.4   5.0.2   node_modules/typescript\n\nFound 2 major updates."
+            },
+            {
+                "id": "msg_4",
+                "role": "agent_question",
+                "content": "I found major updates for React and TypeScript. Should I create a migration branch before applying?"
+            }
+        ];
+
+        const container = document.getElementById('chat-container');
+
+        // ==========================================
+        //  2. RENDER LOGIC (Maps JSON -> HTML)
+        // ==========================================
+
+        function renderFromJSON(data) {
+            container.innerHTML = ''; // Clear current
+
+            data.forEach((block, index) => {
+                const wrapper = document.createElement('div');
+                wrapper.className = `w-full mb-6 fade-in flex flex-col`;
+                wrapper.style.animationDelay = `${index * 0.05}s`;
+
+                // --- A: Agent Question (Green Text / Border) ---
+                if (block.role === 'agent_question') {
+                    wrapper.innerHTML = `
+                        <div class="self-start max-w-2xl group">
+                            <div class="bg-[#0c0c0c] border border-emerald-900/50 rounded-lg p-6 shadow-sm relative">
+                                <div class="absolute -top-3 -left-0 bg-[#050505] border border-emerald-800 text-emerald-500 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">
+                                    Agent Question
+                                </div>
+                                <p class="text-emerald-100/90 text-base leading-7 font-sans">${block.content}</p>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                // --- B: User Response (The "YOU" Box - Terminal Style) ---
+                else if (block.role === 'user_response') {
+                    wrapper.innerHTML = `
+                        <div class="self-end max-w-xl mt-2">
+                            <div class="bg-emerald-950/30 border border-emerald-500/30 text-emerald-50 rounded-lg p-5 relative shadow-md">
+                                <div class="absolute -top-3 -right-0 bg-[#050505] border border-emerald-500/30 text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">
+                                    YOU
+                                </div>
+                                <div class="flex gap-3">
+                                    <span class="text-emerald-600 select-none">$</span>
+                                    <p class="font-mono text-base leading-relaxed text-emerald-100">${block.content}</p>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                // --- C: Tool Call / Terminal Output (Collapsible) ---
+                else if (block.role === 'tool_call' || block.role === 'agent_action') {
+                    const id = `toggle-${index}`;
+                    const isTerminal = block.output_type === 'terminal';
+                    const icon = isTerminal ? 'terminal' : 'file-code';
+
+                    wrapper.innerHTML = `
+                        <div class="self-start w-full max-w-3xl mt-3">
+                            <div class="bg-[#0a0a0a] border border-zinc-800 rounded overflow-hidden">
+                                <button onclick="toggle('${id}')" class="w-full flex items-center justify-between p-3 hover:bg-zinc-900 transition cursor-pointer text-left group border-l-2 border-emerald-600/50">
+                                    <div class="flex items-center gap-3">
+                                        <i data-lucide="${icon}" class="text-emerald-600 w-4 h-4"></i>
+                                        <span class="font-mono text-sm text-zinc-400 font-medium group-hover:text-emerald-100 transition">${block.title || 'System Action'}</span>
+                                    </div>
+                                    <i id="arrow-${id}" data-lucide="chevron-right" class="text-zinc-600 w-4 h-4 transition-transform duration-200"></i>
+                                </button>
+                                
+                                <div id="${id}" class="hidden border-t border-zinc-800 bg-black">
+                                    <div class="p-4 overflow-x-auto custom-scrollbar">
+                                        <pre class="text-xs font-mono text-zinc-400 leading-relaxed"><code>${block.content}</code></pre>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                container.appendChild(wrapper);
+            });
+            lucide.createIcons();
+            scrollToBottom();
+        }
+
+        // ==========================================
+        //  3. INTERACTION HANDLERS
+        // ==========================================
+
+        // Handle new user input (Simulating adding to the JSON list)
+        window.handleSend = function (e) {
+            e.preventDefault();
+            const input = document.getElementById('user-input');
+            const txt = input.value.trim();
+            if (!txt) return;
+
+            // Create a new JSON object for the user input
+            const newUserBlock = {
+                role: "user_response",
+                content: txt,
+                timestamp: new Date().toISOString()
+            };
+
+            // Append to our data source
+            RAW_JSON_DATA.push(newUserBlock);
+
+            // Re-render (In a real app, you'd append to DOM instead of full re-render)
+            renderFromJSON(RAW_JSON_DATA);
+            input.value = '';
+
+            // Simulate Agent Response after 1 second
+            setTimeout(() => {
+                RAW_JSON_DATA.push({
+                    role: "agent_question",
+                    content: "Command received. Processing instructions..."
+                });
+                renderFromJSON(RAW_JSON_DATA);
+            }, 800);
+        }
+
+        window.toggle = function (id) {
+            const el = document.getElementById(id);
+            const arrow = document.getElementById(`arrow-${id}`);
+            if (el.classList.contains('hidden')) {
+                el.classList.remove('hidden');
+                arrow.style.transform = 'rotate(90deg)';
+            } else {
+                el.classList.add('hidden');
+                arrow.style.transform = 'rotate(0deg)';
+            }
+        }
+
+        window.scrollToBottom = function () {
+            const last = container.lastElementChild;
+            if (last) last.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        }
+
+        window.scrollToTop = function () { container.scrollTo({ top: 0, behavior: 'smooth' }); }
+
+        // Initial Render
+        renderFromJSON(RAW_JSON_DATA);
+
+    </script>
+</body>
+
+</html>

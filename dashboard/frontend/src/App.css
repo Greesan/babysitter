@@ -1,0 +1,63 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Matrix / Terminal Theme Base */
+body {
+  background-color: #050505;
+  color: #e4e4e7;
+}
+
+/* Custom Scrollbar (Green Tint) */
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: #050505;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1a2e1a;
+  border-radius: 4px;
+  border: 1px solid #050505;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2d4a2d;
+}
+
+/* Animations */
+@keyframes fadeIn {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+  opacity: 0;
+  transform: translateY(10px);
+}
+
+/* Input Glow Focus (Green) */
+.input-glow:focus-within {
+  box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.4);
+  /* Emerald Glow */
+  border-color: #10b981;
+}
+
+/* Custom utility for hiding scrollbar but keeping functionality if needed */
+.custom-scrollbar::-webkit-scrollbar {
+  height: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #1a2e1a;
+  border-radius: 4px;
+}

@@ -4,11 +4,37 @@ from notion_client import Client
 
 TICKET_DIR = os.environ.get("CLAUDE_TICKET_DIR", "./tickets")
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NOTION_TICKET_DB = os.environ.get("NOTION_TICKET_DB")
 notion = Client(auth=os.environ["NOTION_TOKEN"])
+
+# Query Notion DB to get current state of all tickets
+notion_tickets = {}
+if NOTION_TICKET_DB:
+    try:
+        # Get data source ID from database (databases.query deprecated as of 2025-09-03)
+        database = notion.databases.retrieve(database_id=NOTION_TICKET_DB)
+        data_sources = database.get("data_sources", [])
+
+        if not data_sources:
+            print(f"Warning: No data sources found in database")
+        else:
+            data_source_id = data_sources[0]["id"]  # Use first data source for single-source DBs
+
+            # Query for all tickets in data source
+            response = notion.data_sources.query(data_source_id=data_source_id)
+            for page in response.get("results", []):
+                page_id = page["id"]
+                status_prop = page["properties"].get("Status", {})
+                status = status_prop.get("status", {}).get("name", "") if status_prop else ""
+                archived = page.get("archived", False)
+                notion_tickets[page_id] = {"status": status, "archived": archived}
+            print(f"Loaded {len(notion_tickets)} tickets from Notion DB")
+    except Exception as e:
+        print(f"Warning: Could not query Notion DB: {e}")
 
 # Check archived tickets for resuscitation
 archive_dir = f"{TICKET_DIR}/archive"
-if os.path.exists(archive_dir):
+if os.path.exists(archive_dir) and len(notion_tickets) > 0:
     print("Checking archived tickets for resuscitation...")
     for f in os.listdir(archive_dir):
         if not f.endswith(".page"):
@@ -19,54 +45,69 @@ if os.path.exists(archive_dir):
         if os.path.exists(page_id_path):
             page_id = open(page_id_path).read().strip()
 
-            try:
-                # Check current status in Notion
-                page = notion.pages.retrieve(page_id=page_id)
-                status_prop = page["properties"].get("Status", {})
-                status = status_prop.get("status", {}).get("name", "") if status_prop else ""
-
-                # If status is no longer "Done", resuscitate!
-                if status and status != "Done":
-                    print(f"Resuscitating ticket {ticket} (status changed to: {status})")
-
-                    # Add resuscitation notification to Notion
-                    try:
-                        from datetime import datetime
-                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                        notion.blocks.children.append(
-                            block_id=page_id,
-                            children=[
-                                {
-                                    "object": "block",
-                                    "type": "divider",
-                                    "divider": {}
-                                },
-                                {
-                                    "object": "block",
-                                    "type": "callout",
-                                    "callout": {
-                                        "rich_text": [{"type": "text", "text": {"content": f"🔄 Ticket resuscitated at {timestamp} (status: {status})"}}],
-                                        "icon": {"emoji": "♻️"},
-                                        "color": "green_background"
-                                    }
-                                }
-                            ]
-                        )
-                    except Exception as e:
-                        print(f"  Warning: Could not add resuscitation notification: {e}")
-
-                    # Move files back from archive to active tickets
-                    for ext in [".page", ".question", ".conversation"]:
-                        src = f"{archive_dir}/{ticket}{ext}"
-                        dst = f"{TICKET_DIR}/{ticket}{ext}"
-                        if os.path.exists(src):
-                            os.rename(src, dst)
-
-                    print(f"  Ticket {ticket} moved back to active tickets")
-
-            except Exception as e:
-                print(f"Warning: Could not check archived ticket {ticket}: {e}")
+            # Check if ticket exists in Notion DB (using pre-fetched data)
+            if page_id not in notion_tickets:
+                print(f"Cleaning up archived ticket {ticket} (not found in Notion DB)")
+                # Delete orphaned local files
+                for ext in [".page", ".conversation"]:
+                    orphan_file = f"{archive_dir}/{ticket}{ext}"
+                    if os.path.exists(orphan_file):
+                        os.remove(orphan_file)
+                        print(f"  Deleted {orphan_file}")
                 continue
+
+            ticket_info = notion_tickets[page_id]
+            status = ticket_info["status"]
+            is_archived = ticket_info["archived"]
+
+            # If status is no longer "Done", resuscitate!
+            if status and status != "Done":
+                print(f"Resuscitating ticket {ticket} (status changed to: {status})")
+
+                # Unarchive page first if needed
+                if is_archived:
+                    try:
+                        notion.pages.update(page_id=page_id, archived=False)
+                        print(f"  Unarchived Notion page for ticket {ticket}")
+                    except Exception as e:
+                        print(f"  Warning: Could not unarchive page: {e}")
+
+                # Add resuscitation notification to Notion
+                try:
+                    from datetime import datetime
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    notion.blocks.children.append(
+                        block_id=page_id,
+                        children=[
+                            {
+                                "object": "block",
+                                "type": "divider",
+                                "divider": {}
+                            },
+                            {
+                                "object": "block",
+                                "type": "callout",
+                                "callout": {
+                                    "rich_text": [{"type": "text", "text": {"content": f"🔄 Ticket resuscitated at {timestamp} (status: {status})"}}],
+                                    "icon": {"emoji": "♻️"},
+                                    "color": "green_background"
+                                }
+                            }
+                        ]
+                    )
+                except Exception as e:
+                    print(f"  Warning: Could not add resuscitation notification: {e}")
+
+                # Move files back from archive to active tickets
+                for ext in [".page", ".conversation"]:
+                    src = f"{archive_dir}/{ticket}{ext}"
+                    dst = f"{TICKET_DIR}/{ticket}{ext}"
+                    if os.path.exists(src):
+                        os.rename(src, dst)
+
+                print(f"  Ticket {ticket} moved back to active tickets")
+elif os.path.exists(archive_dir) and len(notion_tickets) == 0:
+    print("Skipping archived ticket resuscitation (Notion DB is empty)")
 
 # Process active tickets
 for f in os.listdir(TICKET_DIR):
@@ -84,7 +125,7 @@ for f in os.listdir(TICKET_DIR):
         # Archive stale ticket file
         archive_dir = f"{TICKET_DIR}/archive"
         os.makedirs(archive_dir, exist_ok=True)
-        for ext in [".page", ".question", ".conversation"]:
+        for ext in [".page", ".conversation"]:
             src = f"{TICKET_DIR}/{ticket}{ext}"
             if os.path.exists(src):
                 os.rename(src, f"{archive_dir}/{ticket}{ext}")
@@ -97,7 +138,7 @@ for f in os.listdir(TICKET_DIR):
         # Archive local ticket files
         archive_dir = f"{TICKET_DIR}/archive"
         os.makedirs(archive_dir, exist_ok=True)
-        for ext in [".page", ".question", ".conversation"]:
+        for ext in [".page", ".conversation"]:
             src = f"{TICKET_DIR}/{ticket}{ext}"
             if os.path.exists(src):
                 os.rename(src, f"{archive_dir}/{ticket}{ext}")
@@ -144,7 +185,7 @@ for f in os.listdir(TICKET_DIR):
         # Archive local files
         archive_dir = f"{TICKET_DIR}/archive"
         os.makedirs(archive_dir, exist_ok=True)
-        for ext in [".page", ".question", ".conversation"]:
+        for ext in [".page", ".conversation"]:
             src = f"{TICKET_DIR}/{ticket}{ext}"
             if os.path.exists(src):
                 os.rename(src, f"{archive_dir}/{ticket}{ext}")
@@ -156,8 +197,10 @@ for f in os.listdir(TICKET_DIR):
         print(f"Ticket {ticket} in Error state, skipping (awaiting human intervention)")
         continue
 
-    # Only process tickets in "Requesting User Input" status
-    if status != "Requesting User Input":
+    # Process tickets in specific statuses
+    RESUMABLE_STATUSES = ["Requesting User Input", "Agent Planning"]
+
+    if status not in RESUMABLE_STATUSES:
         print(f"Ticket {ticket} not ready (status: {status}), skipping")
         continue
 
@@ -214,6 +257,7 @@ for f in os.listdir(TICKET_DIR):
                 break  # Stop after finding the checkbox
 
     # Only resume if both answer exists AND checkbox is checked
+    # Note: "Agent Planning" is treated like "Requesting User Input" - waits for human input
     if human_answer.strip() and checkbox_ready:
         print(f"Resuming Claude for ticket {ticket} with session ID {session_id}")
         try:

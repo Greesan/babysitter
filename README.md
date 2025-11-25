@@ -68,29 +68,45 @@ The script will automatically load environment variables from `.env` on startup.
 - `mcp-config.json` - MCP server configuration
 - `pyproject.toml` - Python dependencies managed by uv
 
-## Status Lifecycle
+## Workflow
 
-Tickets automatically transition through these statuses:
+### Single-Ticket Mode
+1. **Create ticket** in Notion with Status: `Pending`
+2. **Start rwLOOP**: `./rwLOOP.sh`
+3. **rwLOOP claims** ticket → Status: `Agent Planning`
+4. **Provide task** in Notion → Check "Ready to submit"
+5. **Claude implements** → Status: `Agent at Work`
+6. **Review & approve** → Set Status: `Done`
 
-1. **Requesting User Input** - Claude asked a question, awaiting human response
-   - Set automatically by MCP server when `ask_human` is called
-   - Human should respond and check "Ready" checkbox
+### Status Flow
+- **Pending** → Waiting to be claimed by rwLOOP
+- **Agent Planning** → Claimed, waiting for task description
+- **Agent at Work** → Claude implementing
+- **Requesting User Input** → Waiting for human answers
+- **Done** → Complete (human-verified only)
+- **Error** → Crashed, needs manual intervention
 
-2. **Agent at Work** - Claude is actively processing
-   - Set automatically by `resume_poll.py` before resuming Claude
-   - Indicates the agent is working on the task
+## Dashboard Quick Start
 
-3. **Done** - Task complete (human-controlled)
-   - Set manually by human when conversation should end
-   - Automatically archives ticket on next poll cycle
+### Start Dashboard
+```bash
+./dashboard/start_dashboard.sh
+# Frontend: http://localhost:5173
+# Backend: http://localhost:8000
+```
 
-4. **Error** - Resume failed
-   - Set automatically if `claude --resume` fails
-   - Requires human intervention to fix or retry
+### Features
+- **Kanban board** with 5 status columns
+- **Live stats** (total, active loops, in-progress, waiting)
+- **Auto-refresh** every 3 seconds
+- **Session tracking** with turn counts
+- **Direct links** to Notion pages
+
+See `dashboard/README.md` for architecture details.
 
 ## Notes
 
-- The loop uses `--dangerously-skip-permissions` flag for automation
-- Tickets are stored in `./tickets/` directory
-- Multi-turn conversations reuse the same ticket file (.page) until marked Done
-- Previous conversation turns are preserved in collapsible toggle blocks
+- Loop uses `--dangerously-skip-permissions` for automation
+- Tickets stored in `./tickets/` directory
+- Multi-turn conversations reuse same ticket until Done
+- Only humans can mark tickets Done (Claude cannot self-complete)

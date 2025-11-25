@@ -78,7 +78,7 @@ def clean_local_files():
     os.makedirs(archive_dir, exist_ok=True)
 
     for f in os.listdir(TICKET_DIR):
-        if f.endswith((".page", ".question", ".conversation", ".done")):
+        if f.endswith((".page", ".conversation")):
             src = f"{TICKET_DIR}/{f}"
             dst = f"{archive_dir}/{f}"
             os.rename(src, dst)

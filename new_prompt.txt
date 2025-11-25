@@ -1,2 +1,0 @@
-Write a Python function that calculates the factorial of a number,
-but before writing any code, ask me which method I should use: iterative or recursive.

@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "notion": {
+      "command": "uv",
+      "args": [
+        "run",
+        "python3",
+        "./scripts/notion_mcp_server.py"
+      ],
+      "env": {
+        "NOTION_TOKEN": "${NOTION_TOKEN}",
+        "NOTION_DB_ID": "${NOTION_DB_ID}"
+      },
+      "description": "Notion MCP server for ticket management"
+    }
+  }
+}

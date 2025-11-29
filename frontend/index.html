@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Agent SDK - Terminal Interface</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        /* Matrix / Terminal Theme Base */
+        body {
+            background-color: #050505;
+            color: #e4e4e7;
+        }
+
+        /* Custom Scrollbar (Green Tint) */
+        ::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #050505;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #1a2e1a;
+            border-radius: 4px;
+            border: 1px solid #050505;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #2d4a2d;
+        }
+
+        /* Animations */
+        .fade-in {
+            animation: fadeIn 0.3s ease-out forwards;
+            opacity: 0;
+            transform: translateY(10px);
+        }
+
+        @keyframes fadeIn {
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        /* Input Glow Focus (Green) */
+        .input-glow:focus-within {
+            box-shadow: 0 0 0 1px rgba(16, 185, 129, 0.4);
+            border-color: #10b981;
+        }
+
+        /* Connection Status Pulse */
+        @keyframes pulse-green {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .status-pulse {
+            animation: pulse-green 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+    </style>
+</head>
+
+<body
+    class="h-screen flex flex-col overflow-hidden font-mono antialiased selection:bg-emerald-900 selection:text-white">
+
+    <!-- Navigation (Shortcuts) -->
+    <div class="fixed top-6 right-6 flex flex-col gap-3 z-50">
+        <button onclick="scrollToTop()"
+            class="p-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-full shadow-xl text-emerald-500 hover:text-emerald-400 transition duration-200 group">
+            <i data-lucide="arrow-up" class="group-hover:-translate-y-0.5 transition-transform"></i>
+        </button>
+        <button onclick="scrollToBottom()"
+            class="p-3 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-full shadow-xl text-emerald-500 hover:text-emerald-400 transition duration-200 group">
+            <i data-lucide="arrow-down" class="group-hover:translate-y-0.5 transition-transform"></i>
+        </button>
+    </div>
+
+    <!-- Main Feed -->
+    <main id="chat-container" class="flex-1 overflow-y-auto px-4 py-12 pb-64 w-full max-w-4xl mx-auto scroll-smooth">
+        <!-- Welcome Message -->
+        <div class="w-full mb-6 fade-in flex flex-col">
+            <div class="self-start max-w-2xl group">
+                <div class="bg-[#0c0c0c] border border-emerald-900/50 rounded-lg p-6 shadow-sm relative">
+                    <div class="absolute -top-3 -left-0 bg-[#050505] border border-emerald-800 text-emerald-500 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">
+                        System
+                    </div>
+                    <p class="text-emerald-100/90 text-base leading-7 font-sans">Agent SDK initialized. Ready to process tickets.</p>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- Floating Input (Bottom) -->
+    <div
+        class="fixed bottom-0 left-0 w-full px-4 pb-8 pt-12 bg-gradient-to-t from-[#050505] via-[#050505] to-transparent z-40 flex justify-center pointer-events-none">
+        <div class="w-full max-w-3xl pointer-events-auto">
+            <div
+                class="bg-[#0a0a0a]/95 backdrop-blur-xl border border-zinc-800 shadow-2xl rounded-lg overflow-hidden input-glow transition-all duration-300">
+                <form id="chat-form" onsubmit="handleSend(event)" class="flex flex-col">
+
+                    <!-- Meta Bar -->
+                    <div class="px-4 py-2 bg-black/40 border-b border-white/5 flex justify-between items-center">
+                        <div
+                            class="flex items-center gap-2 text-xs font-bold uppercase tracking-widest"
+                            id="connection-status">
+                            <span class="w-2 h-2 rounded-full bg-yellow-500 status-pulse"></span>
+                            <span class="text-yellow-600">Connecting...</span>
+                        </div>
+                        <span class="text-xs font-mono text-zinc-600" id="session-id">No Session</span>
+                    </div>
+
+                    <!-- Input -->
+                    <textarea id="user-input"
+                        class="w-full p-4 h-20 bg-[#0a0a0a] text-emerald-100 placeholder:text-zinc-700 border-none outline-none resize-none text-base font-mono"
+                        placeholder="Type your response or create a new ticket..."
+                        onkeydown="if(event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); handleSend(event); }"></textarea>
+
+                    <!-- Actions -->
+                    <div class="flex justify-between items-center px-3 pb-3 pt-1 bg-[#0a0a0a]">
+                        <div class="flex gap-1">
+                            <button type="button" onclick="createTicket()"
+                                class="p-2 hover:bg-zinc-900 rounded text-zinc-600 hover:text-emerald-500 transition"
+                                title="Create New Ticket">
+                                <i data-lucide="plus-circle" width="18"></i>
+                            </button>
+                        </div>
+
+                        <!-- Execute Button (Green) -->
+                        <button type="submit"
+                            class="bg-emerald-700 hover:bg-emerald-600 text-white px-6 py-2 rounded text-sm font-bold tracking-wide shadow-lg shadow-emerald-900/20 transition-all flex items-center gap-2 uppercase">
+                            <span>Send</span>
+                            <i data-lucide="send" width="14" class="fill-current"></i>
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ==========================================
+        //  WEBSOCKET CONNECTION
+        // ==========================================
+
+        const WS_URL = 'ws://localhost:8000/ws';
+        let socket = null;
+        let currentSessionId = null;
+        let isWaitingForResponse = false;
+        let messageHistory = [];
+
+        const container = document.getElementById('chat-container');
+        const connectionStatus = document.getElementById('connection-status');
+        const sessionIdEl = document.getElementById('session-id');
+
+        function connectWebSocket() {
+            socket = new WebSocket(WS_URL);
+
+            socket.onopen = function() {
+                console.log('WebSocket connected');
+                updateConnectionStatus('connected');
+            };
+
+            socket.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                console.log('Received:', data);
+                handleWebSocketMessage(data);
+            };
+
+            socket.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                updateConnectionStatus('error');
+            };
+
+            socket.onclose = function() {
+                console.log('WebSocket closed. Reconnecting...');
+                updateConnectionStatus('disconnected');
+                setTimeout(connectWebSocket, 3000);
+            };
+        }
+
+        function updateConnectionStatus(status) {
+            const statusDot = connectionStatus.querySelector('.w-2');
+            const statusText = connectionStatus.querySelector('span:last-child');
+
+            if (status === 'connected') {
+                statusDot.className = 'w-2 h-2 rounded-full bg-emerald-500 status-pulse';
+                statusText.className = 'text-emerald-600';
+                statusText.textContent = 'Connected';
+            } else if (status === 'disconnected') {
+                statusDot.className = 'w-2 h-2 rounded-full bg-red-500';
+                statusText.className = 'text-red-600';
+                statusText.textContent = 'Disconnected';
+            } else if (status === 'error') {
+                statusDot.className = 'w-2 h-2 rounded-full bg-red-500';
+                statusText.className = 'text-red-600';
+                statusText.textContent = 'Error';
+            } else {
+                statusDot.className = 'w-2 h-2 rounded-full bg-yellow-500 status-pulse';
+                statusText.className = 'text-yellow-600';
+                statusText.textContent = 'Connecting...';
+            }
+        }
+
+        // ==========================================
+        //  MESSAGE HANDLING
+        // ==========================================
+
+        function handleWebSocketMessage(data) {
+            switch(data.type) {
+                case 'agent_question':
+                    appendBlock({
+                        role: 'agent_question',
+                        content: data.content,
+                        timestamp: data.timestamp
+                    });
+                    isWaitingForResponse = true;
+                    if (data.session_id) {
+                        currentSessionId = data.session_id;
+                        sessionIdEl.textContent = `Session: ${currentSessionId.slice(0, 8)}...`;
+                    }
+                    break;
+
+                case 'tool_call':
+                    appendBlock({
+                        role: 'tool_call',
+                        title: data.title || `Tool: ${data.tool_name}`,
+                        content: data.content || JSON.stringify(data.tool_output, null, 2),
+                        output_type: 'terminal'
+                    });
+                    break;
+
+                case 'agent_complete':
+                    appendBlock({
+                        role: 'agent_question',
+                        content: `✅ Task completed successfully. Ticket: ${data.ticket_id}`,
+                        timestamp: new Date().toISOString()
+                    });
+                    isWaitingForResponse = false;
+                    currentSessionId = null;
+                    sessionIdEl.textContent = 'No Session';
+                    break;
+
+                case 'agent_error':
+                    appendBlock({
+                        role: 'agent_question',
+                        content: `❌ Error: ${data.error}`,
+                        timestamp: new Date().toISOString()
+                    });
+                    isWaitingForResponse = false;
+                    break;
+
+                case 'agent_started':
+                    appendBlock({
+                        role: 'agent_question',
+                        content: `🤖 Agent started processing ticket: ${data.ticket_name}`,
+                        timestamp: new Date().toISOString()
+                    });
+                    if (data.session_id) {
+                        currentSessionId = data.session_id;
+                        sessionIdEl.textContent = `Session: ${currentSessionId.slice(0, 8)}...`;
+                    }
+                    break;
+
+                case 'ack':
+                    console.log('Response acknowledged');
+                    break;
+
+                case 'pong':
+                    console.log('Pong received');
+                    break;
+            }
+        }
+
+        // ==========================================
+        //  RENDER BLOCKS
+        // ==========================================
+
+        function appendBlock(block) {
+            const wrapper = document.createElement('div');
+            wrapper.className = `w-full mb-6 fade-in flex flex-col`;
+
+            // --- A: Agent Question (Green Text / Border) ---
+            if (block.role === 'agent_question') {
+                wrapper.innerHTML = `
+                    <div class="self-start max-w-2xl group">
+                        <div class="bg-[#0c0c0c] border border-emerald-900/50 rounded-lg p-6 shadow-sm relative">
+                            <div class="absolute -top-3 -left-0 bg-[#050505] border border-emerald-800 text-emerald-500 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">
+                                Agent
+                            </div>
+                            <p class="text-emerald-100/90 text-base leading-7 font-sans">${block.content}</p>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // --- B: User Response (The "YOU" Box - Terminal Style) ---
+            else if (block.role === 'user_response') {
+                wrapper.innerHTML = `
+                    <div class="self-end max-w-xl mt-2">
+                        <div class="bg-emerald-950/30 border border-emerald-500/30 text-emerald-50 rounded-lg p-5 relative shadow-md">
+                            <div class="absolute -top-3 -right-0 bg-[#050505] border border-emerald-500/30 text-emerald-400 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">
+                                YOU
+                            </div>
+                            <div class="flex gap-3">
+                                <span class="text-emerald-600 select-none">$</span>
+                                <p class="font-mono text-base leading-relaxed text-emerald-100">${block.content}</p>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            // --- C: Tool Call / Terminal Output (Collapsible) ---
+            else if (block.role === 'tool_call' || block.role === 'agent_action') {
+                const id = `toggle-${Date.now()}-${Math.random()}`;
+                const isTerminal = block.output_type === 'terminal';
+                const icon = isTerminal ? 'terminal' : 'file-code';
+
+                wrapper.innerHTML = `
+                    <div class="self-start w-full max-w-3xl mt-3">
+                        <div class="bg-[#0a0a0a] border border-zinc-800 rounded overflow-hidden">
+                            <button onclick="toggle('${id}')" class="w-full flex items-center justify-between p-3 hover:bg-zinc-900 transition cursor-pointer text-left group border-l-2 border-emerald-600/50">
+                                <div class="flex items-center gap-3">
+                                    <i data-lucide="${icon}" class="text-emerald-600 w-4 h-4"></i>
+                                    <span class="font-mono text-sm text-zinc-400 font-medium group-hover:text-emerald-100 transition">${block.title || 'System Action'}</span>
+                                </div>
+                                <i id="arrow-${id}" data-lucide="chevron-right" class="text-zinc-600 w-4 h-4 transition-transform duration-200"></i>
+                            </button>
+
+                            <div id="${id}" class="hidden border-t border-zinc-800 bg-black">
+                                <div class="p-4 overflow-x-auto custom-scrollbar">
+                                    <pre class="text-xs font-mono text-zinc-400 leading-relaxed"><code>${block.content}</code></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+
+            container.appendChild(wrapper);
+            messageHistory.push(block);
+            lucide.createIcons();
+            scrollToBottom();
+        }
+
+        // ==========================================
+        //  USER INTERACTIONS
+        // ==========================================
+
+        window.handleSend = function(e) {
+            e.preventDefault();
+            const input = document.getElementById('user-input');
+            const txt = input.value.trim();
+            if (!txt) return;
+
+            // Display user's message
+            appendBlock({
+                role: 'user_response',
+                content: txt,
+                timestamp: new Date().toISOString()
+            });
+
+            // Send to backend via WebSocket
+            if (currentSessionId && isWaitingForResponse) {
+                // This is a response to an agent question
+                socket.send(JSON.stringify({
+                    type: 'user_response',
+                    session_id: currentSessionId,
+                    response: txt
+                }));
+                isWaitingForResponse = false;
+            } else {
+                // This is a new ticket creation
+                createTicketFromInput(txt);
+            }
+
+            input.value = '';
+        };
+
+        function createTicketFromInput(ticketText) {
+            // Create ticket via API
+            fetch('http://localhost:8000/tickets/create', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    ticket_name: ticketText,
+                    description: null
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log('Ticket created:', data);
+                // Don't show ticket details in frontend - only show when agent starts
+            })
+            .catch(err => {
+                console.error('Error creating ticket:', err);
+                appendBlock({
+                    role: 'agent_question',
+                    content: `❌ Error creating ticket: ${err.message}`,
+                    timestamp: new Date().toISOString()
+                });
+            });
+        }
+
+        window.createTicket = function() {
+            const ticketName = prompt('Enter ticket/task description:');
+            if (!ticketName) return;
+
+            createTicketFromInput(ticketName);
+        };
+
+        window.toggle = function(id) {
+            const el = document.getElementById(id);
+            const arrow = document.getElementById(`arrow-${id}`);
+            if (el.classList.contains('hidden')) {
+                el.classList.remove('hidden');
+                arrow.style.transform = 'rotate(90deg)';
+            } else {
+                el.classList.add('hidden');
+                arrow.style.transform = 'rotate(0deg)';
+            }
+        };
+
+        window.scrollToBottom = function() {
+            const last = container.lastElementChild;
+            if (last) last.scrollIntoView({ behavior: 'smooth', block: 'end' });
+        };
+
+        window.scrollToTop = function() {
+            container.scrollTo({ top: 0, behavior: 'smooth' });
+        };
+
+        // Initialize WebSocket connection
+        connectWebSocket();
+
+        // Initialize Lucide icons
+        lucide.createIcons();
+
+    </script>
+</body>
+
+</html>

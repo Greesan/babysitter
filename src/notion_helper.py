@@ -3,7 +3,7 @@ Notion helper functions for Agent SDK integration.
 Handles ticket queries, conversation state persistence, and status updates.
 """
 import json
-from typing import Optional, Dict, List, Any
+from typing import Optional, Dict, List, Any, Union
 from notion_client import Client
 from notion_client.errors import APIResponseError
 
@@ -65,11 +65,137 @@ def get_ticket_context(
         raise
 
 
+def _dict_to_blocks(data: Union[Dict, List, Any], max_depth: int = 10, current_depth: int = 0) -> List[Dict]:
+    """
+    Recursively convert dict/list to nested Notion toggle blocks.
+
+    Args:
+        data: Dictionary, list, or primitive value to convert
+        max_depth: Maximum nesting depth to prevent infinite recursion
+        current_depth: Current recursion depth
+
+    Returns:
+        List of Notion block objects
+    """
+    if current_depth >= max_depth:
+        # Reached max depth - return as paragraph
+        return [{
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [{"text": {"content": str(data)[:2000]}}]  # Notion limit
+            }
+        }]
+
+    if isinstance(data, dict):
+        blocks = []
+        for key, value in data.items():
+            if isinstance(value, (dict, list)) and value:  # Non-empty nested structure
+                # Create toggle block with nested children
+                children = _dict_to_blocks(value, max_depth, current_depth + 1)
+                blocks.append({
+                    "object": "block",
+                    "type": "toggle",
+                    "toggle": {
+                        "rich_text": [{"text": {"content": str(key)[:2000]}}],
+                        "children": children
+                    }
+                })
+            else:
+                # Leaf value - create paragraph
+                value_str = json.dumps(value) if isinstance(value, (dict, list)) else str(value)
+                blocks.append({
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [{"text": {"content": f"{key}: {value_str[:1900]}"}}]
+                    }
+                })
+        return blocks
+
+    elif isinstance(data, list):
+        # Convert list items to blocks
+        blocks = []
+        for i, item in enumerate(data):
+            if isinstance(item, (dict, list)) and item:
+                children = _dict_to_blocks(item, max_depth, current_depth + 1)
+                blocks.append({
+                    "object": "block",
+                    "type": "toggle",
+                    "toggle": {
+                        "rich_text": [{"text": {"content": f"[{i}]"}}],
+                        "children": children
+                    }
+                })
+            else:
+                item_str = json.dumps(item) if isinstance(item, (dict, list)) else str(item)
+                blocks.append({
+                    "object": "block",
+                    "type": "paragraph",
+                    "paragraph": {
+                        "rich_text": [{"text": {"content": f"[{i}]: {item_str[:1900]}"}}]
+                    }
+                })
+        return blocks
+
+    else:
+        # Primitive value - return as paragraph
+        return [{
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {
+                "rich_text": [{"text": {"content": str(data)[:2000]}}]
+            }
+        }]
+
+
+def append_conversation_message(
+    notion_client: Client, ticket_id: str, message: Dict[str, Any]
+) -> bool:
+    """
+    Append a single message to the conversation as nested toggle blocks.
+
+    Args:
+        notion_client: Notion API client
+        ticket_id: Notion page ID
+        message: Message dict to append
+
+    Returns:
+        True if successful, False otherwise
+    """
+    try:
+        # Convert message to nested blocks
+        message_blocks = _dict_to_blocks({"message": message})
+
+        # Append to page
+        notion_client.blocks.children.append(
+            block_id=ticket_id,
+            children=message_blocks
+        )
+
+        # Update turn count
+        turn = message.get("turn", 0)
+        notion_client.pages.update(
+            page_id=ticket_id,
+            properties={"Turn Count": {"number": turn}}
+        )
+
+        return True
+
+    except Exception as e:
+        print(f"Error appending conversation message: {e}")
+        return False
+
+
 def save_conversation_state(
     notion_client: Client, ticket_id: str, conversation: List[Dict[str, Any]]
 ) -> bool:
     """
-    Save conversation state to Notion as JSON.
+    Save conversation state by appending only new messages as blocks.
+
+    NOTE: This is now append-only. Use append_conversation_message() instead
+    for single message appends. This function is kept for backward compatibility
+    and will append all messages in the list.
 
     Args:
         notion_client: Notion API client
@@ -80,25 +206,11 @@ def save_conversation_state(
         True if successful, False otherwise
     """
     try:
-        # Convert conversation to JSON string
-        conversation_json = json.dumps(conversation)
-
-        # Calculate turn count (max turn number in conversation)
-        turn_count = 0
+        # For now, just append the last message in the conversation
+        # This maintains compatibility with existing code that calls save_conversation_state
         if conversation:
-            turn_count = max(msg.get("turn", 0) for msg in conversation)
-
-        # Update Notion page with conversation JSON and turn count
-        notion_client.pages.update(
-            page_id=ticket_id,
-            properties={
-                "Conversation JSON": {
-                    "rich_text": [{"text": {"content": conversation_json}}]
-                },
-                "Turn Count": {"number": turn_count},
-            },
-        )
-
+            last_message = conversation[-1]
+            return append_conversation_message(notion_client, ticket_id, last_message)
         return True
 
     except Exception as e:
@@ -106,11 +218,103 @@ def save_conversation_state(
         return False
 
 
+def _blocks_to_dict(blocks: List[Dict], notion_client: Client) -> Union[Dict, List, str]:
+    """
+    Recursively parse Notion toggle blocks back to dict/list.
+
+    Args:
+        blocks: List of Notion block objects
+        notion_client: Notion client for fetching nested children
+
+    Returns:
+        Parsed dict, list, or string value
+    """
+    if not blocks:
+        return {}
+
+    # Determine if this is a dict-like or list-like structure
+    # List-like if all keys are "[0]", "[1]", etc.
+    is_list = all(
+        block.get("type") in ("toggle", "paragraph") and
+        _get_block_text(block).strip().startswith("[") and
+        "]" in _get_block_text(block).split(":")[0]
+        for block in blocks
+    )
+
+    if is_list:
+        # Parse as list
+        result = []
+        for block in blocks:
+            block_type = block.get("type")
+            text = _get_block_text(block)
+
+            if block_type == "toggle":
+                # Nested structure - recursively fetch children
+                children_response = notion_client.blocks.children.list(block_id=block["id"])
+                children = children_response.get("results", [])
+                result.append(_blocks_to_dict(children, notion_client))
+            elif block_type == "paragraph":
+                # Leaf value - parse "[index]: value"
+                if ": " in text:
+                    _, value_str = text.split(": ", 1)
+                    result.append(_parse_value(value_str))
+                else:
+                    result.append(text)
+        return result
+    else:
+        # Parse as dict
+        result = {}
+        for block in blocks:
+            block_type = block.get("type")
+            text = _get_block_text(block)
+
+            if block_type == "toggle":
+                # Key is the toggle heading, value is nested structure
+                key = text.strip()
+                children_response = notion_client.blocks.children.list(block_id=block["id"])
+                children = children_response.get("results", [])
+                result[key] = _blocks_to_dict(children, notion_client)
+            elif block_type == "paragraph":
+                # Leaf value - parse "key: value"
+                if ": " in text:
+                    key, value_str = text.split(": ", 1)
+                    result[key] = _parse_value(value_str)
+                else:
+                    # Just a text paragraph
+                    result[text] = text
+        return result
+
+
+def _get_block_text(block: Dict) -> str:
+    """Extract plain text from a Notion block."""
+    block_type = block.get("type")
+    if block_type == "toggle":
+        rich_text = block.get("toggle", {}).get("rich_text", [])
+    elif block_type == "paragraph":
+        rich_text = block.get("paragraph", {}).get("rich_text", [])
+    else:
+        return ""
+
+    if rich_text and len(rich_text) > 0:
+        return rich_text[0].get("plain_text", "")
+    return ""
+
+
+def _parse_value(value_str: str) -> Any:
+    """Parse a string value to appropriate Python type."""
+    try:
+        # Try parsing as JSON first (handles dicts, lists, numbers, bools, null)
+        return json.loads(value_str)
+    except (json.JSONDecodeError, ValueError):
+        # Return as string
+        return value_str
+
+
 def load_conversation_state(
     notion_client: Client, ticket_id: str
 ) -> List[Dict[str, Any]]:
     """
-    Load conversation state from Notion JSON property.
+    Load conversation state from Notion blocks (new) or JSON property (legacy).
 
     Args:
         notion_client: Notion API client
@@ -120,20 +324,48 @@ def load_conversation_state(
         List of message dicts, or empty list if no conversation exists
     """
     try:
+        # First, try loading from blocks (new format)
+        blocks_response = notion_client.blocks.children.list(block_id=ticket_id)
+        blocks = blocks_response.get("results", [])
+
+        if blocks:
+            # Parse blocks recursively - each top-level toggle is a separate message
+            # Structure: Each message is wrapped as {"message": {...}}
+            conversation = []
+
+            for block in blocks:
+                if block.get("type") == "toggle":
+                    # Fetch children for this toggle
+                    children_response = notion_client.blocks.children.list(block_id=block["id"])
+                    children = children_response.get("results", [])
+
+                    # Parse this message's nested structure
+                    parsed_message = _blocks_to_dict(children, notion_client)
+
+                    # Extract the actual message dict
+                    if isinstance(parsed_message, dict):
+                        # If it has a "message" key, unwrap it
+                        if "message" in parsed_message:
+                            conversation.append(parsed_message["message"])
+                        else:
+                            # Otherwise use the dict as-is
+                            conversation.append(parsed_message)
+
+            if conversation:
+                return conversation
+
+        # Fallback: Try loading from JSON property (legacy format)
         page = notion_client.pages.retrieve(page_id=ticket_id)
         properties = page["properties"]
 
-        # Check if Conversation JSON property exists
         if "Conversation JSON" not in properties:
             return []
 
         conversation_prop = properties["Conversation JSON"]
 
-        # Check if property has content
         if not conversation_prop.get("rich_text"):
             return []
 
-        # Parse JSON
         conversation_json = conversation_prop["rich_text"][0]["text"]["content"]
         conversation = json.loads(conversation_json)
 
@@ -143,6 +375,8 @@ def load_conversation_state(
         return []
     except Exception as e:
         print(f"Error loading conversation state: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 

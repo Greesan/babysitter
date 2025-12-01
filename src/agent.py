@@ -26,22 +26,22 @@ class AgentConfig:
     notion_token: str
     notion_db_id: str
     model: str = "sonnet"
-    max_turns: int = 50
+    max_turns: int = 10  # Lower limit for testing/development to prevent runaway costs
     timeout_seconds: int = 600
 
 
-def initialize_agent(config: AgentConfig) -> ClaudeSDKClient:
+def initialize_agent(config: AgentConfig, notion_client: Client) -> ClaudeSDKClient:
     """
     Initialize Claude SDK client with configuration and hooks.
 
     Args:
         config: Agent configuration
+        notion_client: Shared Notion client instance
 
     Returns:
         Configured ClaudeSDKClient instance with hooks registered
     """
-    # Create Notion client for the agent to use
-    notion_client = Client(auth=config.notion_token)
+    # Use provided Notion client (shared instance)
 
     # Store client reference globally so hooks can access it
     # This is a workaround since HookContext doesn't provide client access
@@ -51,41 +51,51 @@ def initialize_agent(config: AgentConfig) -> ClaudeSDKClient:
     # SDK signature: async def hook(input_data: dict, tool_use_id: str | None, context: HookContext) -> dict
     async def user_prompt_wrapper(input_data, tool_use_id, hook_context):
         """Wrapper for UserPromptSubmit hook."""
-        # input_data contains 'prompt' key
-        prompt = input_data.get("prompt", "")
+        try:
+            # input_data contains 'prompt' key
+            prompt = input_data.get("prompt", "")
 
-        # Get client from our global reference
-        client_instance = _agent_client_ref.get("client")
-        if not client_instance:
-            return {"response": "[No client available]"}
+            # Get client from our global reference
+            client_instance = _agent_client_ref.get("client")
+            if not client_instance:
+                return {"response": "[No client available]"}
 
-        # Call our custom hook
-        response = user_prompt_submit_hook(context=client_instance, prompt=prompt)
+            # Call our custom hook
+            response = user_prompt_submit_hook(context=client_instance, prompt=prompt)
 
-        # Return in SDK format
-        return {"response": response}
+            # Return in SDK format
+            return {"response": response}
+        except Exception as e:
+            print(f"Error in user_prompt_wrapper: {e}")
+            # Return default response to keep agent moving
+            return {"response": "[Error in hook - proceeding with default]"}
 
     async def post_tool_wrapper(input_data, tool_use_id, hook_context):
         """Wrapper for PostToolUse hook."""
-        # input_data contains tool execution data
-        tool_event = {
-            "tool_name": input_data.get("tool_name", "unknown"),
-            "tool_input": input_data.get("tool_input", {}),
-            "tool_output": input_data.get("tool_response"),  # SDK uses 'tool_response', not 'tool_output'
-        }
-        if "error" in input_data:
-            tool_event["error"] = input_data["error"]
+        try:
+            # input_data contains tool execution data
+            tool_event = {
+                "tool_name": input_data.get("tool_name", "unknown"),
+                "tool_input": input_data.get("tool_input", {}),
+                "tool_output": input_data.get("tool_response"),  # SDK uses 'tool_response', not 'tool_output'
+            }
+            if "error" in input_data:
+                tool_event["error"] = input_data["error"]
 
-        # Get client from our global reference
-        client_instance = _agent_client_ref.get("client")
-        if not client_instance:
+            # Get client from our global reference
+            client_instance = _agent_client_ref.get("client")
+            if not client_instance:
+                return {}
+
+            # Call our custom hook
+            post_tool_use_hook(context=client_instance, tool_event=tool_event)
+
+            # Return empty dict
             return {}
-
-        # Call our custom hook
-        post_tool_use_hook(context=client_instance, tool_event=tool_event)
-
-        # Return empty dict
-        return {}
+        except Exception as e:
+            print(f"Error in post_tool_wrapper: {e}")
+            # Return empty dict to continue execution
+            return {}
 
     # Configure hooks
     hooks = {
@@ -98,6 +108,7 @@ def initialize_agent(config: AgentConfig) -> ClaudeSDKClient:
         model=config.model,
         max_turns=config.max_turns,
         hooks=hooks,
+        permission_mode='bypassPermissions',  # Auto-approve all tools for testing
     )
 
     # Initialize Claude SDK client
@@ -148,8 +159,8 @@ async def run_agent_for_ticket(config: AgentConfig) -> Optional[Dict[str, Any]]:
         print(f"Error: Could not load context for ticket {ticket_id}")
         return None
 
-    # Initialize agent
-    client = initialize_agent(config)
+    # Initialize agent with shared Notion client
+    client = initialize_agent(config, notion_client)
 
     # Store ticket info in client for hooks to access
     client._current_ticket_id = ticket_id
@@ -163,6 +174,7 @@ async def run_agent_for_ticket(config: AgentConfig) -> Optional[Dict[str, Any]]:
         if ws_manager:
             import asyncio
             from datetime import datetime, timezone
+            print(f"Broadcasting agent_started to WebSocket clients...")
             await ws_manager.broadcast({
                 "type": "agent_started",
                 "ticket_id": ticket_id,
@@ -170,21 +182,27 @@ async def run_agent_for_ticket(config: AgentConfig) -> Optional[Dict[str, Any]]:
                 "session_id": session_id,
                 "timestamp": datetime.now(timezone.utc).isoformat()
             })
+            print(f"Broadcast sent. Active connections: {len(ws_manager.active_connections)}")
     except Exception as e:
         print(f"Error broadcasting agent_started: {e}")
+        import traceback
+        traceback.print_exc()
 
     # Call session_start hook to initialize session state
     conversation_history = session_start_hook(context=client)
 
     # Create initial prompt from ticket
-    initial_prompt = f"""You are working on the following task:
+    initial_prompt = f"""Execute the following task:
 
 {ticket_name}
 
-Please analyze this task and begin working on it. If you need clarification or input from the user, ask questions.
+Proceed directly with execution. Use available tools to complete the task. Only ask for user input if you encounter a genuine blocker or ambiguity that prevents completion.
 """
 
     try:
+        # Update status to "Agent Working"
+        update_ticket_status(notion_client, ticket_id, "Agent Working")
+
         # Connect the client first
         print(f"Connecting Claude SDK client...")
         await client.connect()
@@ -196,8 +214,8 @@ Please analyze this task and begin working on it. If you need clarification or i
         # Agent execution completed (hooks were called during execution)
         print(f"Agent execution completed for ticket: {ticket_id}")
 
-        # Update ticket status to completed
-        update_ticket_status(notion_client, ticket_id, "Completed")
+        # Update ticket status to completed (will be overridden if agent asked a question)
+        update_ticket_status(notion_client, ticket_id, "Done")
 
         return {
             "ticket_id": ticket_id,

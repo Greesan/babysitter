@@ -6,8 +6,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict
 from src.notion_helper import (
-    save_conversation_state,
-    load_conversation_state,
+    append_conversation_message,
 )
 
 
@@ -41,9 +40,6 @@ def post_tool_use_hook(context: Any, tool_event: Dict[str, Any]) -> None:
     session_id = getattr(context, "_session_id", None)
     current_turn = getattr(context, "_current_turn", 0)
 
-    # Load existing conversation
-    conversation = load_conversation_state(notion_client, ticket_id)
-
     # Create tool use entry
     tool_entry = {
         "type": "tool_use",
@@ -58,14 +54,70 @@ def post_tool_use_hook(context: Any, tool_event: Dict[str, Any]) -> None:
     if "error" in tool_event:
         tool_entry["error"] = tool_event["error"]
 
-    # Append to conversation
-    conversation.append(tool_entry)
-
-    # Save updated conversation
-    save_conversation_state(notion_client, ticket_id, conversation)
+    # Append message directly to Notion blocks (no load needed)
+    append_conversation_message(notion_client, ticket_id, tool_entry)
 
     # Increment turn count
     context._current_turn = current_turn + 1
 
-    # TODO: Re-enable WebSocket broadcast once async handling is fixed
+    # Broadcast tool execution via WebSocket
+    ws_manager = get_websocket_manager()
+    if ws_manager and session_id:
+        try:
+            # Format tool output for display
+            tool_output = tool_event.get("tool_output", {})
+            if isinstance(tool_output, dict):
+                output_str = tool_output.get("stdout", "")
+                if tool_output.get("stderr"):
+                    output_str += f"\n[stderr]\n{tool_output['stderr']}"
+            else:
+                output_str = str(tool_output)
+
+            # Extract meaningful description from tool_input
+            tool_input = tool_event.get("tool_input", {})
+            tool_name = tool_event.get("tool_name", "unknown")
+
+            # Create descriptive header for tool execution
+            if tool_name == "Bash" and "command" in tool_input:
+                tool_description = f"Bash: {tool_input['command'][:80]}"
+            elif "description" in tool_input:
+                tool_description = f"{tool_name}: {tool_input['description'][:80]}"
+            else:
+                tool_description = tool_name
+
+            # Get the running event loop and schedule broadcast
+            import asyncio
+            try:
+                loop = asyncio.get_running_loop()
+                print(f"Broadcasting tool_execution: {tool_description} to {len(ws_manager.active_connections)} connections")
+                loop.create_task(ws_manager.broadcast({
+                    "type": "tool_execution",
+                    "session_id": session_id,
+                    "ticket_id": ticket_id,
+                    "tool_name": tool_name,
+                    "tool_description": tool_description,
+                    "tool_input": tool_input,
+                    "tool_output": output_str,
+                    "timestamp": tool_entry["timestamp"],
+                    "turn": current_turn
+                }))
+            except RuntimeError:
+                # No running loop - create task differently
+                print(f"No running loop - using ensure_future for tool_execution broadcast")
+                asyncio.ensure_future(ws_manager.broadcast({
+                    "type": "tool_execution",
+                    "session_id": session_id,
+                    "ticket_id": ticket_id,
+                    "tool_name": tool_name,
+                    "tool_description": tool_description,
+                    "tool_input": tool_input,
+                    "tool_output": output_str,
+                    "timestamp": tool_entry["timestamp"],
+                    "turn": current_turn
+                }))
+        except Exception as e:
+            print(f"Error broadcasting tool execution: {e}")
+            import traceback
+            traceback.print_exc()
+
     print(f"Tool executed: {tool_event.get('tool_name', 'unknown')}")

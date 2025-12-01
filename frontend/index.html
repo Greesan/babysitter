@@ -55,8 +55,15 @@
 
         /* Connection Status Pulse */
         @keyframes pulse-green {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
         }
 
         .status-pulse {
@@ -86,10 +93,12 @@
         <div class="w-full mb-6 fade-in flex flex-col">
             <div class="self-start max-w-2xl group">
                 <div class="bg-[#0c0c0c] border border-emerald-900/50 rounded-lg p-6 shadow-sm relative">
-                    <div class="absolute -top-3 -left-0 bg-[#050505] border border-emerald-800 text-emerald-500 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">
+                    <div
+                        class="absolute -top-3 -left-0 bg-[#050505] border border-emerald-800 text-emerald-500 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">
                         System
                     </div>
-                    <p class="text-emerald-100/90 text-base leading-7 font-sans">Agent SDK initialized. Ready to process tickets.</p>
+                    <p class="text-emerald-100/90 text-base leading-7 font-sans">Agent SDK initialized. Ready to process
+                        tickets.</p>
                 </div>
             </div>
         </div>
@@ -105,8 +114,7 @@
 
                     <!-- Meta Bar -->
                     <div class="px-4 py-2 bg-black/40 border-b border-white/5 flex justify-between items-center">
-                        <div
-                            class="flex items-center gap-2 text-xs font-bold uppercase tracking-widest"
+                        <div class="flex items-center gap-2 text-xs font-bold uppercase tracking-widest"
                             id="connection-status">
                             <span class="w-2 h-2 rounded-full bg-yellow-500 status-pulse"></span>
                             <span class="text-yellow-600">Connecting...</span>
@@ -150,6 +158,7 @@
         const WS_URL = 'ws://localhost:8000/ws';
         let socket = null;
         let currentSessionId = null;
+        let currentTicketName = null;
         let isWaitingForResponse = false;
         let messageHistory = [];
 
@@ -160,23 +169,23 @@
         function connectWebSocket() {
             socket = new WebSocket(WS_URL);
 
-            socket.onopen = function() {
+            socket.onopen = function () {
                 console.log('WebSocket connected');
                 updateConnectionStatus('connected');
             };
 
-            socket.onmessage = function(event) {
+            socket.onmessage = function (event) {
                 const data = JSON.parse(event.data);
                 console.log('Received:', data);
                 handleWebSocketMessage(data);
             };
 
-            socket.onerror = function(error) {
+            socket.onerror = function (error) {
                 console.error('WebSocket error:', error);
                 updateConnectionStatus('error');
             };
 
-            socket.onclose = function() {
+            socket.onclose = function () {
                 console.log('WebSocket closed. Reconnecting...');
                 updateConnectionStatus('disconnected');
                 setTimeout(connectWebSocket, 3000);
@@ -211,8 +220,52 @@
         // ==========================================
 
         function handleWebSocketMessage(data) {
-            switch(data.type) {
+            switch (data.type) {
+                case 'agent_message':
+                    // Agent sending a message (question, status update, etc.)
+                    appendBlock({
+                        role: 'agent_question',
+                        content: data.content,
+                        timestamp: data.timestamp
+                    });
+                    if (data.message_type === 'question') {
+                        isWaitingForResponse = true;
+                    }
+                    if (data.session_id) {
+                        currentSessionId = data.session_id;
+                        // Display ticket name if available, otherwise show session ID
+                        if (currentTicketName) {
+                            const displayName = currentTicketName.length > 50
+                                ? currentTicketName.slice(0, 50) + '...'
+                                : currentTicketName;
+                            sessionIdEl.textContent = `Task: ${displayName}`;
+                        } else {
+                            sessionIdEl.textContent = `Session: ${currentSessionId.slice(0, 8)}...`;
+                        }
+                    }
+                    break;
+
+                case 'tool_execution':
+                    // Tool was executed - show expandable block with command in header
+                    const toolOutput = data.tool_output || '';
+
+                    // Use tool_description from backend (already has command formatted)
+                    const headerTitle = data.tool_description
+                        ? `🔧 ${data.tool_description}`
+                        : `🔧 ${data.tool_name}`;
+
+                    appendBlock({
+                        role: 'tool_call',
+                        title: headerTitle,
+                        content: toolOutput,
+                        output_type: 'terminal',
+                        tool_name: data.tool_name,
+                        tool_output: toolOutput
+                    });
+                    break;
+
                 case 'agent_question':
+                    // Legacy support
                     appendBlock({
                         role: 'agent_question',
                         content: data.content,
@@ -225,23 +278,15 @@
                     }
                     break;
 
-                case 'tool_call':
-                    appendBlock({
-                        role: 'tool_call',
-                        title: data.title || `Tool: ${data.tool_name}`,
-                        content: data.content || JSON.stringify(data.tool_output, null, 2),
-                        output_type: 'terminal'
-                    });
-                    break;
-
                 case 'agent_complete':
                     appendBlock({
                         role: 'agent_question',
-                        content: `✅ Task completed successfully. Ticket: ${data.ticket_id}`,
+                        content: `✅ Task completed successfully`,
                         timestamp: new Date().toISOString()
                     });
                     isWaitingForResponse = false;
                     currentSessionId = null;
+                    currentTicketName = null;
                     sessionIdEl.textContent = 'No Session';
                     break;
 
@@ -255,14 +300,16 @@
                     break;
 
                 case 'agent_started':
-                    appendBlock({
-                        role: 'agent_question',
-                        content: `🤖 Agent started processing ticket: ${data.ticket_name}`,
-                        timestamp: new Date().toISOString()
-                    });
+                    // Don't display a message - just update the session info
                     if (data.session_id) {
                         currentSessionId = data.session_id;
-                        sessionIdEl.textContent = `Session: ${currentSessionId.slice(0, 8)}...`;
+                    }
+                    if (data.ticket_name) {
+                        currentTicketName = data.ticket_name;
+                        const displayName = currentTicketName.length > 50
+                            ? currentTicketName.slice(0, 50) + '...'
+                            : currentTicketName;
+                        sessionIdEl.textContent = `Task: ${displayName}`;
                     }
                     break;
 
@@ -317,6 +364,41 @@
 
             // --- C: Tool Call / Terminal Output (Collapsible) ---
             else if (block.role === 'tool_call' || block.role === 'agent_action') {
+                // Attempt to extract Input JSON to title
+                if (block.content) {
+                    const inputIndex = block.content.search(/Input:\s*\{/);
+                    if (inputIndex !== -1) {
+                        const startJsonIndex = block.content.indexOf('{', inputIndex);
+                        let braceCount = 0;
+                        let endJsonIndex = -1;
+
+                        for (let i = startJsonIndex; i < block.content.length; i++) {
+                            if (block.content[i] === '{') braceCount++;
+                            else if (block.content[i] === '}') braceCount--;
+
+                            if (braceCount === 0) {
+                                endJsonIndex = i + 1;
+                                break;
+                            }
+                        }
+
+                        if (endJsonIndex !== -1) {
+                            try {
+                                const rawJson = block.content.substring(startJsonIndex, endJsonIndex);
+                                const parsed = JSON.parse(rawJson);
+                                const minified = JSON.stringify(parsed);
+
+                                block.title = (block.title || 'System Action') + `: Input: ${minified}`;
+
+                                const partToRemove = block.content.substring(inputIndex, endJsonIndex);
+                                block.content = block.content.replace(partToRemove, '').trim();
+                            } catch (e) {
+                                console.error("Failed to parse Input JSON:", e);
+                            }
+                        }
+                    }
+                }
+
                 const id = `toggle-${Date.now()}-${Math.random()}`;
                 const isTerminal = block.output_type === 'terminal';
                 const icon = isTerminal ? 'terminal' : 'file-code';
@@ -352,7 +434,7 @@
         //  USER INTERACTIONS
         // ==========================================
 
-        window.handleSend = function(e) {
+        window.handleSend = function (e) {
             e.preventDefault();
             const input = document.getElementById('user-input');
             const txt = input.value.trim();
@@ -394,29 +476,29 @@
                     description: null
                 })
             })
-            .then(res => res.json())
-            .then(data => {
-                console.log('Ticket created:', data);
-                // Don't show ticket details in frontend - only show when agent starts
-            })
-            .catch(err => {
-                console.error('Error creating ticket:', err);
-                appendBlock({
-                    role: 'agent_question',
-                    content: `❌ Error creating ticket: ${err.message}`,
-                    timestamp: new Date().toISOString()
+                .then(res => res.json())
+                .then(data => {
+                    console.log('Ticket created:', data);
+                    // Don't show ticket details in frontend - only show when agent starts
+                })
+                .catch(err => {
+                    console.error('Error creating ticket:', err);
+                    appendBlock({
+                        role: 'agent_question',
+                        content: `❌ Error creating ticket: ${err.message}`,
+                        timestamp: new Date().toISOString()
+                    });
                 });
-            });
         }
 
-        window.createTicket = function() {
+        window.createTicket = function () {
             const ticketName = prompt('Enter ticket/task description:');
             if (!ticketName) return;
 
             createTicketFromInput(ticketName);
         };
 
-        window.toggle = function(id) {
+        window.toggle = function (id) {
             const el = document.getElementById(id);
             const arrow = document.getElementById(`arrow-${id}`);
             if (el.classList.contains('hidden')) {
@@ -428,12 +510,12 @@
             }
         };
 
-        window.scrollToBottom = function() {
+        window.scrollToBottom = function () {
             const last = container.lastElementChild;
             if (last) last.scrollIntoView({ behavior: 'smooth', block: 'end' });
         };
 
-        window.scrollToTop = function() {
+        window.scrollToTop = function () {
             container.scrollTo({ top: 0, behavior: 'smooth' });
         };
 

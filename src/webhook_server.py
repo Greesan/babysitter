@@ -151,9 +151,15 @@ async def trigger_agent_execution(ticket_id: str, database_id: str) -> Dict[str,
     # Generate job ID
     job_id = f"job-{uuid.uuid4().hex[:8]}"
 
-    # In production, queue this with Celery/RQ
-    # For now, run in background with asyncio
-    asyncio.create_task(run_agent_background(job_id, ticket_id, database_id))
+    # Check if any WebSocket clients are connected (resource optimization)
+    if len(manager.active_connections) > 0:
+        # In production, queue this with Celery/RQ
+        # For now, run in background with asyncio
+        asyncio.create_task(run_agent_background(job_id, ticket_id, database_id))
+        print(f"Agent started for ticket {ticket_id} with {len(manager.active_connections)} WebSocket client(s) connected")
+    else:
+        # No frontend connected - don't waste resources running agent
+        print(f"No WebSocket clients connected. Ticket {ticket_id} will remain Pending until frontend connects.")
 
     return {
         "job_id": job_id,
